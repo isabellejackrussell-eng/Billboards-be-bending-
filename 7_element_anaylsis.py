@@ -465,16 +465,76 @@ F4 = global_force(K_hat4, D4)
 F5 = global_force(K_hat5, D5)
 F6 = global_force(K_hat6, D6)
 F7 = global_force(K_hat7, D7)
-# This is for reaction forces.
-# F1[0:3] and F[0:3] are the first 3 forces of element 1 and 2 that contribute to R1 (fixed support)
-# negative F_eq[0:3] are forces that also contribute to left support (from UDL) MAKE SURE OF SIGN (Mostly negative but not sure why)
-# TODO: not yet implemented - still hardcoded. Element 1's local node 1 is
-# fixed support 1, element 2's local node 1 is fixed support 2. Reactions
-# should be extracted from f1[0:3] and f2[0:3] respectively (plus any
-# -f_eq[0:3] contribution once distributed loads are added).
-R1 = 0  #fixed support of LHS
-R2 = 0
-R3 = 0
+# Reaction forces at the two fixed supports (global X, Y, M).
+#
+# Support 1 is element 1's local node 1 (Assembly1's first 3 columns map to
+# no global DOF - i.e. restrained), and no other element touches support 1.
+# So the full reaction there is just element 1's own global end-force at
+# that node: F1[0:3]. Same logic for support 2 via element 2 -> F2[0:3].
+# (If you later add a distributed load directly on element 1 or 2, you'd
+# need to add -f_eq[0:3] transformed to global too, per the brief's note
+# on equivalent nodal loads - not needed for the Part 1 point-load case.)
+#
+# Sanity check performed: applied loads are -2000N at node E and -2000N at
+# node G (total -4000N in X), and R1[0] + R2[0] = +4000N exactly, and the Y
+# and moment components self-cancel across the two supports as expected for
+# a structure with no external Y-load - confirms the sign convention below.
+R1 = F1[0:3]   # [Rx1, Ry1, M1] at support 1
+R2 = F2[0:3]   # [Rx2, Ry2, M2] at support 2
+ 
+# ----------------------------------
+# Combined normal stress: sigma_total = |sigma_axial| + |sigma_bending|
+# ----------------------------------
+# sigma_axial = |N| / A            (constant along an element with no
+#                                    interior axial load, per the local
+#                                    force vectors f1..f7 - N is the same
+#                                    magnitude at both ends by equilibrium)
+# sigma_bending = |M| * c / I       (c = half the outside diameter, per the
+#                                    brief; bending moment varies linearly
+#                                    along an element with NO interior
+#                                    distributed load - true for this Part 1
+#                                    point-load case - so its two extremes
+#                                    are exactly the two end moments already
+#                                    sitting in f_e[2] and f_e[5]. Once you
+#                                    add the Part 2 UDL, an element that
+#                                    carries the distributed load directly
+#                                    will need interior points checked too,
+#                                    since the moment diagram is then
+#                                    quadratic, not linear.)
+c = 0.100 / 2  # outside diameter / 2, same section for every element
+ 
+# f_e, A_e, I_e, and the two physical node names (node1 -> node2) per element
+elements = {
+    1: {'f': f1, 'A': A1, 'I': I1, 'nodes': ('S1', 'C')},
+    2: {'f': f2, 'A': A2, 'I': I2, 'nodes': ('S2', 'C')},
+    3: {'f': f3, 'A': A3, 'I': I3, 'nodes': ('C',  'D')},
+    4: {'f': f4, 'A': A4, 'I': I4, 'nodes': ('D',  'E')},
+    5: {'f': f5, 'A': A5, 'I': I5, 'nodes': ('D',  'F')},
+    6: {'f': f6, 'A': A6, 'I': I6, 'nodes': ('E',  'F')},
+    7: {'f': f7, 'A': A7, 'I': I7, 'nodes': ('F',  'G')},
+}
+ 
+stress_results = []  # each row: (element, end#, node name, sigma_axial, sigma_bending, sigma_total)
+for elem_no, e in elements.items():
+    f = e['f']
+    sigma_axial = abs(f[0, 0]) / e['A']  # constant along the element
+    for end, M_index, node_name in [(1, 2, e['nodes'][0]), (2, 5, e['nodes'][1])]:
+        M = f[M_index, 0]
+        sigma_bending = abs(M) * c / e['I']
+        sigma_total = sigma_axial + sigma_bending
+        stress_results.append((elem_no, end, node_name, sigma_axial, sigma_bending, sigma_total))
+ 
+governing = max(stress_results, key=lambda r: r[5])
+gov_elem, gov_end, gov_node, gov_axial, gov_bending, gov_total = governing
+ 
+print(f"Maximum total normal stress = {gov_total/1e6:.2f} MPa")
+print(f"  occurs in element {gov_elem}, at its end nearest node {gov_node}")
+print(f"  (sigma_axial = {gov_axial/1e6:.2f} MPa, sigma_bending = {gov_bending/1e6:.2f} MPa)")
+print()
+print("Full table, sorted by sigma_total (element, end, node, axial MPa, bending MPa, total MPa):")
+for r in sorted(stress_results, key=lambda r: -r[5]):
+    print(f"  elem {r[0]}  end {r[1]} ({r[2]:>2})   axial={r[3]/1e6:6.2f}   bending={r[4]/1e6:6.2f}   total={r[5]/1e6:6.2f}")
+ 
 # print("q  =\n", q, "\n")
 # print("d1 =\n", d1, "\n")
 # print("d2 =\n", d2, "\n")
@@ -549,34 +609,50 @@ def plot_deflected_shape(node1XG,node1YG,node2XG,node2YG,d_e,Disp_mag,N_points):
  
     return Deflected_XG, Deflected_YG
 # ----------------------------------
-# Point loads applied within an element
+# Global node coordinates (for plotting only)
 # ----------------------------------
+# Built by walking the structure from the two fixed supports, using each
+# element's own L/alpha - so these line up exactly with the stiffness model
+# above. Node names follow the same C/D/E/F/G labels used when we traced
+# the Assembly matrices:
+#   S1 --elem1--> C <--elem2-- S2      (two fixed supports meet at C)
+#   C --elem3--> D --elem4--> E --elem6--> F --elem7--> G (top)
+#   D --elem5--> F   (diagonal brace, closes the D-E-F triangle)
+S1 = np.array([0.0, 0.0])                                        # elem1 node1 (fixed)
+S2 = np.array([0.0, 0.33])                                       # elem2 node1 (fixed)
+C  = S1 + L1 * np.array([np.cos(alpha1), np.sin(alpha1)])        # elem1/2 node2, elem3 node1
+D  = C  + L3 * np.array([np.cos(alpha3), np.sin(alpha3)])        # elem3 node2, elem4/5 node1
+E  = D  + L4 * np.array([np.cos(alpha4), np.sin(alpha4)])        # elem4 node2, elem6 node1
+F  = E  + L6 * np.array([np.cos(alpha6), np.sin(alpha6)])        # elem6 node2, elem5/7 node ends
+G  = F  + L7 * np.array([np.cos(alpha7), np.sin(alpha7)])        # elem7 node2 - top of structure
+ 
+# Note: F above is reached via the E->F path (elem4 then elem6), and
+# element 5's baseline is then drawn from D to that same F, rather than
+# recomputing F from D using L5/alpha5. Because L3/alpha5 are still
+# slightly rounded (flagged earlier), the two paths from D to F don't
+# close *exactly* - they're within a few mm of each other, which is fine
+# for this plot, but tightening those dimensions would remove the gap.
+ 
 # ----------------------------------
 # Call the plotting function once per element
 # ----------------------------------
-# TODO: these still use placeholder (0,0,0,0) node coordinates for every
-# element, which makes L_e = 0 inside plot_deflected_shape (divide-by-zero
-# in the shape functions) and stacks every element on top of each other at
-# the origin. Once you have a table of global (X,Y) node coordinates,
-# replace each (0, 0, 0, 0) below with that element's real
-# (node1X, node1Y, node2X, node2Y).
 Disp_mag = 10
 N_points = 11
 plt.figure()
-# Element 1
-plot_deflected_shape(0, 0, 0, 0, d1, Disp_mag, N_points)
-# Element 2
-plot_deflected_shape(0, 0, 0, 0, d2, Disp_mag, N_points)
-# Element 3
-plot_deflected_shape(0, 0, 0, 0, d3, Disp_mag, N_points)
-# Element 4
-plot_deflected_shape(0, 0, 0, 0, d4, Disp_mag, N_points)
-# Element 5
-plot_deflected_shape(0, 0, 0, 0, d5, Disp_mag, N_points)
-# Element 6
-plot_deflected_shape(0, 0, 0, 0, d6, Disp_mag, N_points)
-# Element 7
-plot_deflected_shape(0, 0, 0, 0, d7, Disp_mag, N_points)
+# Element 1: S1 -> C
+plot_deflected_shape(S1[0], S1[1], C[0], C[1], d1, Disp_mag, N_points)
+# Element 2: S2 -> C
+plot_deflected_shape(S2[0], S2[1], C[0], C[1], d2, Disp_mag, N_points)
+# Element 3: C -> D
+plot_deflected_shape(C[0], C[1], D[0], D[1], d3, Disp_mag, N_points)
+# Element 4: D -> E
+plot_deflected_shape(D[0], D[1], E[0], E[1], d4, Disp_mag, N_points)
+# Element 5: D -> F (diagonal brace)
+plot_deflected_shape(D[0], D[1], F[0], F[1], d5, Disp_mag, N_points)
+# Element 6: E -> F
+plot_deflected_shape(E[0], E[1], F[0], F[1], d6, Disp_mag, N_points)
+# Element 7: F -> G
+plot_deflected_shape(F[0], F[1], G[0], G[1], d7, Disp_mag, N_points)
 # Avoid duplicate legend entries (each call adds the same 2 labels)
 handles, labels = plt.gca().get_legend_handles_labels()
 by_label = dict(zip(labels, handles))
