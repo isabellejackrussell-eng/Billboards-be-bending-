@@ -1,4 +1,4 @@
-Lab 4
+
 import numpy as np
 import matplotlib.pyplot as plt
 # -----------------------------------
@@ -636,6 +636,169 @@ print(f"Top of structure (node G) deflection:")
 print(f"  X = {q_P2[12, 0]*1000:.4f} mm")
 print(f"  Y = {q_P2[13, 0]*1000:.4f} mm")
 print(f"  theta = {q_P2[14, 0]:.6e} rad")
+ 
+# ----------------------------------
+# Part 2 stress: sigma_total along each element
+# ----------------------------------
+# Elements 1-5 carry no distributed load, so (like Part 1) their bending
+# moment is linear along the element and its extremes are at the two ends.
+# Elements 6 and 7 now carry the UDL directly, so their moment diagram is
+# PARABOLIC, not linear - the peak stress can occur mid-element, not just
+# at the nodes. moment_along_element() below handles both cases with one
+# formula (w_bar=0 collapses it to plain linear interpolation between the
+# end moments, same as Part 1).
+def moment_along_element(M1, M2, w_bar, L, N_points=101):
+    """True bending moment M(x) in local coordinates along an element,
+    given its TRUE end moments M1, M2 (i.e. after subtracting f_eq, for an
+    element that carries a distributed load) and the local-transverse UDL
+    magnitude w_bar acting on it (0 if none).
+    Validated against a cantilever loaded only by a UDL w: this reduces to
+    the standard M(s) = -w*s^2/2 measured from the free end.
+    """
+    x = np.linspace(0, L, N_points)
+    M = M1 * (1 - x / L) + M2 * (x / L) + (w_bar / 2) * x * (L - x)
+    return x, M
+ 
+elements_P2 = {
+    1: {'f': f1_P2, 'A': A1, 'I': I1, 'L': L1, 'w_bar': 0.0,    'nodes': ('S1', 'C')},
+    2: {'f': f2_P2, 'A': A2, 'I': I2, 'L': L2, 'w_bar': 0.0,    'nodes': ('S2', 'C')},
+    3: {'f': f3_P2, 'A': A3, 'I': I3, 'L': L3, 'w_bar': 0.0,    'nodes': ('C',  'D')},
+    4: {'f': f4_P2, 'A': A4, 'I': I4, 'L': L4, 'w_bar': 0.0,    'nodes': ('D',  'E')},
+    5: {'f': f5_P2, 'A': A5, 'I': I5, 'L': L5, 'w_bar': 0.0,    'nodes': ('D',  'F')},
+    6: {'f': f6_P2, 'A': A6, 'I': I6, 'L': L6, 'w_bar': w_bar6, 'nodes': ('E',  'F')},
+    7: {'f': f7_P2, 'A': A7, 'I': I7, 'L': L7, 'w_bar': w_bar7, 'nodes': ('F',  'G')},
+}
+ 
+stress_results_P2 = []  # (element, x at governing point, element length, sigma_axial, sigma_bending, sigma_total)
+for elem_no, e in elements_P2.items():
+    f = e['f']
+    # Axial force from p_bar (elements 6/7's tiny axial UDL component) does
+    # technically vary along the element, but p_bar6/p_bar7 are ~0 since
+    # alpha6/alpha7 are within a fraction of a degree of 90 - treating N as
+    # constant (its node-1 value) introduces negligible error here.
+    sigma_axial = abs(f[0, 0]) / e['A']
+    M1, M2 = f[2, 0], f[5, 0]
+    x_vals, M_vals = moment_along_element(M1, M2, e['w_bar'], e['L'])
+    sigma_bending_vals = np.abs(M_vals) * c / e['I']
+    sigma_total_vals = sigma_axial + sigma_bending_vals
+    i_max = int(np.argmax(sigma_total_vals))
+    stress_results_P2.append((elem_no, x_vals[i_max], e['L'], sigma_axial,
+                               sigma_bending_vals[i_max], sigma_total_vals[i_max]))
+ 
+governing_P2 = max(stress_results_P2, key=lambda r: r[5])
+g_elem, g_x, g_L, g_axial, g_bending, g_total = governing_P2
+ 
+print()
+print(f"Maximum total normal stress (Low wind UDL) = {g_total/1e6:.2f} MPa")
+print(f"  occurs in element {g_elem}, at x = {g_x:.4f} m along its {g_L:.4f} m length")
+print(f"  (sigma_axial = {g_axial/1e6:.2f} MPa, sigma_bending = {g_bending/1e6:.2f} MPa)")
+print()
+print("Governing point per element, sorted by sigma_total:")
+for r in sorted(stress_results_P2, key=lambda r: -r[5]):
+    frac = (r[1] / r[2] * 100) if r[2] else 0.0
+    print(f"  elem {r[0]}  x={r[1]:.4f} m ({frac:4.1f}% along)   axial={r[3]/1e6:6.2f}   bending={r[4]/1e6:6.2f}   total={r[5]/1e6:6.2f}")
+ 
+# ----------------------------------
+# Part 2: maximum rated wind speed for a factor of safety of 2.5
+# ----------------------------------
+def solve_wind_case(V_ms, depth=sign_depth):
+    """Solve the frame under a UDL wind load on the sign face (elements 6
+    & 7, same setup as the 'Low' case above) for wind speed V_ms (m/s),
+    blowing directly onto the sign. Returns q, per-element deflections/
+    true forces, the full stress table, and the governing (max) sigma_total
+    anywhere in the structure.
+    """
+    pressure = 0.6 * V_ms**2              # Pa, per the brief's note
+    w = pressure_to_udl(pressure, depth)  # N/m
+ 
+    w_gx, w_gy = -w, 0.0
+    p6, wb6 = global_udl_to_local(w_gx, w_gy, alpha6)
+    p7, wb7 = global_udl_to_local(w_gx, w_gy, alpha7)
+ 
+    feq6 = Axial_UDL_frame_f_eq(p6, L6) + UDL_frame_f_eq(wb6, L6)
+    feq7 = Axial_UDL_frame_f_eq(p7, L7) + UDL_frame_f_eq(wb7, L7)
+ 
+    Qeq6 = Q_eq(Assembly6, F_eq(Lambda6, feq6))
+    Qeq7 = Q_eq(Assembly7, F_eq(Lambda7, feq7))
+    Qtot = Qeq6 + Qeq7
+ 
+    qv = displacements(Qtot, KG_Total)
+ 
+    Assemblies = [Assembly1, Assembly2, Assembly3, Assembly4, Assembly5, Assembly6, Assembly7]
+    Lambdas = [Lambda1, Lambda2, Lambda3, Lambda4, Lambda5, Lambda6, Lambda7]
+    Ks = [K1, K2, K3, K4, K5, K6, K7]
+    Ds = [global_deflections(Asm, qv) for Asm in Assemblies]
+    ds = [element_deflections(Lam, D) for Lam, D in zip(Lambdas, Ds)]
+    fs = [element_force(K, d) for K, d in zip(Ks, ds)]
+    fs[5] = fs[5] - feq6   # element 6: subtract equivalent load to get true forces
+    fs[6] = fs[6] - feq7   # element 7
+ 
+    Ls = [L1, L2, L3, L4, L5, L6, L7]
+    As = [A1, A2, A3, A4, A5, A6, A7]
+    Is = [I1, I2, I3, I4, I5, I6, I7]
+    w_bars = [0.0, 0.0, 0.0, 0.0, 0.0, wb6, wb7]
+ 
+    results = []
+    for idx in range(7):
+        f = fs[idx]
+        sigma_axial = abs(f[0, 0]) / As[idx]
+        M1, M2 = f[2, 0], f[5, 0]
+        x_vals, M_vals = moment_along_element(M1, M2, w_bars[idx], Ls[idx])
+        sigma_bending_vals = np.abs(M_vals) * c / Is[idx]
+        sigma_total_vals = sigma_axial + sigma_bending_vals
+        i_max = int(np.argmax(sigma_total_vals))
+        results.append((idx + 1, x_vals[i_max], Ls[idx], sigma_axial,
+                         sigma_bending_vals[i_max], sigma_total_vals[i_max]))
+ 
+    governing = max(results, key=lambda r: r[5])
+    return {'V': V_ms, 'w_UDL': w, 'q': qv, 'D': Ds, 'd': ds, 'f': fs,
+            'stress_results': results, 'governing': governing, 'sigma_max': governing[5]}
+ 
+# Reference case: reuse the 'Low' wind result already computed above rather
+# than re-solving. V_ref is back-calculated from Table 1's own pressure
+# formula (Pressure = 0.6*V^2) to confirm it matches the Low category's
+# 32 m/s exactly.
+V_ref = np.sqrt(wind_table['Low'] / 0.6)  # m/s
+sigma_ref = g_total                        # governing sigma_total from the Low case, above
+ 
+sigma_yield = 350e6
+FoS_required = 2.5
+sigma_allow = sigma_yield / FoS_required   # 140 MPa
+ 
+# Because the FE model is linear elastic, EVERY stress in the structure
+# scales exactly with the applied UDL, and the UDL itself scales with V^2
+# (pressure = 0.6*V^2) - so the governing element/location doesn't change
+# with wind speed, and V_max can be found directly rather than by
+# iterating/bisecting:
+V_max = V_ref * np.sqrt(sigma_allow / sigma_ref)
+ 
+print()
+print(f"--- Max rated wind speed for FoS >= {FoS_required} ---")
+print(f"Allowable stress = yield / FoS = {sigma_yield/1e6:.0f} / {FoS_required} = {sigma_allow/1e6:.1f} MPa")
+print(f"Reference case: V_ref = {V_ref:.3f} m/s ({V_ref*3.6:.1f} km/h), sigma_max = {sigma_ref/1e6:.2f} MPa")
+print(f"V_max = V_ref * sqrt(sigma_allow / sigma_ref) = {V_max:.3f} m/s ({V_max*3.6:.1f} km/h)")
+ 
+# Validate by fully re-solving the FE model at V_max (also gives the
+# deflections/reactions the brief asks for at this loading case)
+case_max = solve_wind_case(V_max)
+print(f"Check - re-solving directly at V_max gives sigma_max = {case_max['sigma_max']/1e6:.4f} MPa "
+      f"(should equal {sigma_allow/1e6:.1f} MPa)")
+ 
+q_max = case_max['q']
+print()
+print(f"Deflections at the top of the structure (node G) at V_max:")
+print(f"  X = {q_max[12, 0]*1000:.4f} mm")
+print(f"  Y = {q_max[13, 0]*1000:.4f} mm")
+print(f"  theta = {q_max[14, 0]:.6e} rad")
+ 
+F1_max = global_force(K_hat1, case_max['D'][0])
+F2_max = global_force(K_hat2, case_max['D'][1])
+R1_max = F1_max[0:3]
+R2_max = F2_max[0:3]
+print()
+print(f"Reactions at V_max:")
+print(f"  Support 1: Rx={R1_max[0,0]:.2f} N, Ry={R1_max[1,0]:.2f} N, M={R1_max[2,0]:.2f} N.m")
+print(f"  Support 2: Rx={R2_max[0,0]:.2f} N, Ry={R2_max[1,0]:.2f} N, M={R2_max[2,0]:.2f} N.m")
  
 # print("q  =\n", q, "\n")
 # print("d1 =\n", d1, "\n")
