@@ -1,4 +1,3 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 # -----------------------------------
@@ -197,7 +196,32 @@ Assembly7 = np.array(
     [0, 0, 0, 1, 0, 0],
     [0, 0, 0, 0, 1, 0],
     [0, 0, 0, 0, 0, 1]])
+
  
+# Element 8 (new brace: from support S2 to node G)
+L8 = np.sqrt(0.75**2 + (1.5-0.33)**2)
+alpha8 = 0.9981  # radians (57.19 deg)
+I8 = 1.688115e-6
+A8 = 1.492257e-3
+E8 = 200e9
+beta8 = beta(A8,L8,I8)
+Assembly8 = np.array(
+    [[0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 1, 0, 0],
+    [0, 0, 0, 0, 1, 0],
+    [0, 0, 0, 0, 0, 1]])
+
 # Part 1 point loads (Figure 2): two 2000N horizontal loads, pointing in -X
 # (toward the wall), applied at node E (bottom of the sign, global rows 7-9)
 # and node G (top of the sign, global rows 13-15). Only the X-DOF (first row
@@ -401,6 +425,7 @@ K4 = local_frame(E4, I4, L4, beta4)
 K5 = local_frame(E5, I5, L5, beta5)
 K6 = local_frame(E6, I6, L6, beta6)
 K7 = local_frame(E7, I7, L7, beta7)
+K8 = local_frame(E8, I8, L8, beta8)
 K_hat1, Lambda1 = global_frame(K1, alpha1)
 K_hat2, Lambda2 = global_frame(K2, alpha2)
 K_hat3, Lambda3 = global_frame(K3, alpha3)
@@ -408,6 +433,7 @@ K_hat4, Lambda4 = global_frame(K4, alpha4)
 K_hat5, Lambda5 = global_frame(K5, alpha5)
 K_hat6, Lambda6 = global_frame(K6, alpha6)
 K_hat7, Lambda7 = global_frame(K7, alpha7)
+K_hat8, Lambda8 = global_frame(K8, alpha8)
 KG1 = global_stiffness(Assembly1, K_hat1)
 KG2 = global_stiffness(Assembly2, K_hat2)
 KG3 = global_stiffness(Assembly3, K_hat3)
@@ -415,7 +441,11 @@ KG4 = global_stiffness(Assembly4, K_hat4)
 KG5 = global_stiffness(Assembly5, K_hat5)
 KG6 = global_stiffness(Assembly6, K_hat6)
 KG7 = global_stiffness(Assembly7, K_hat7)
+KG8 = global_stiffness(Assembly8, K_hat8)
 KG_Total = KG1 + KG2 + KG3 + KG4 + KG5 + KG6 + KG7
+KG_Total_mod = KG_Total + KG8
+
+
 # -----------------------------------
 # CHANGE THESE VALUES TO SUIT THE CURRENT MODEL!!!!!!!
 # -----------------------------------
@@ -700,44 +730,30 @@ for r in sorted(stress_results_P2, key=lambda r: -r[5]):
  
 # ----------------------------------
 # Part 2: maximum rated wind speed for a factor of safety of 2.5
-# ----------------------------------
 def solve_wind_case(V_ms, depth=sign_depth):
-    """Solve the frame under a UDL wind load on the sign face (elements 6
-    & 7, same setup as the 'Low' case above) for wind speed V_ms (m/s),
-    blowing directly onto the sign. Returns q, per-element deflections/
-    true forces, the full stress table, and the governing (max) sigma_total
-    anywhere in the structure.
-    """
-    pressure = 0.6 * V_ms**2              # Pa, per the brief's note
-    w = pressure_to_udl(pressure, depth)  # N/m
- 
+    pressure = 0.6 * V_ms**2
+    w = pressure_to_udl(pressure, depth)
     w_gx, w_gy = -w, 0.0
     p6, wb6 = global_udl_to_local(w_gx, w_gy, alpha6)
     p7, wb7 = global_udl_to_local(w_gx, w_gy, alpha7)
- 
     feq6 = Axial_UDL_frame_f_eq(p6, L6) + UDL_frame_f_eq(wb6, L6)
     feq7 = Axial_UDL_frame_f_eq(p7, L7) + UDL_frame_f_eq(wb7, L7)
- 
     Qeq6 = Q_eq(Assembly6, F_eq(Lambda6, feq6))
     Qeq7 = Q_eq(Assembly7, F_eq(Lambda7, feq7))
     Qtot = Qeq6 + Qeq7
- 
     qv = displacements(Qtot, KG_Total)
- 
     Assemblies = [Assembly1, Assembly2, Assembly3, Assembly4, Assembly5, Assembly6, Assembly7]
     Lambdas = [Lambda1, Lambda2, Lambda3, Lambda4, Lambda5, Lambda6, Lambda7]
     Ks = [K1, K2, K3, K4, K5, K6, K7]
     Ds = [global_deflections(Asm, qv) for Asm in Assemblies]
     ds = [element_deflections(Lam, D) for Lam, D in zip(Lambdas, Ds)]
     fs = [element_force(K, d) for K, d in zip(Ks, ds)]
-    fs[5] = fs[5] - feq6   # element 6: subtract equivalent load to get true forces
-    fs[6] = fs[6] - feq7   # element 7
- 
+    fs[5] = fs[5] - feq6
+    fs[6] = fs[6] - feq7
     Ls = [L1, L2, L3, L4, L5, L6, L7]
     As = [A1, A2, A3, A4, A5, A6, A7]
     Is = [I1, I2, I3, I4, I5, I6, I7]
     w_bars = [0.0, 0.0, 0.0, 0.0, 0.0, wb6, wb7]
- 
     results = []
     for idx in range(7):
         f = fs[idx]
@@ -749,10 +765,53 @@ def solve_wind_case(V_ms, depth=sign_depth):
         i_max = int(np.argmax(sigma_total_vals))
         results.append((idx + 1, x_vals[i_max], Ls[idx], sigma_axial,
                          sigma_bending_vals[i_max], sigma_total_vals[i_max]))
- 
     governing = max(results, key=lambda r: r[5])
     return {'V': V_ms, 'w_UDL': w, 'q': qv, 'D': Ds, 'd': ds, 'f': fs,
             'stress_results': results, 'governing': governing, 'sigma_max': governing[5]}
+# ----------------------------------
+def solve_wind_case_mod(V_ms, depth=sign_depth):
+    pressure = 0.6 * V_ms**2
+    w = pressure_to_udl(pressure, depth)
+    w_gx, w_gy = -w, 0.0
+    p6, wb6 = global_udl_to_local(w_gx, w_gy, alpha6)
+    p7, wb7 = global_udl_to_local(w_gx, w_gy, alpha7)
+    feq6 = Axial_UDL_frame_f_eq(p6, L6) + UDL_frame_f_eq(wb6, L6)
+    feq7 = Axial_UDL_frame_f_eq(p7, L7) + UDL_frame_f_eq(wb7, L7)
+    Qeq6 = Q_eq(Assembly6, F_eq(Lambda6, feq6))
+    Qeq7 = Q_eq(Assembly7, F_eq(Lambda7, feq7))
+    Qtot = Qeq6 + Qeq7
+
+    qv = displacements(Qtot, KG_Total_mod)
+
+    Assemblies = [Assembly1, Assembly2, Assembly3, Assembly4, Assembly5, Assembly6, Assembly7, Assembly8]
+    Lambdas = [Lambda1, Lambda2, Lambda3, Lambda4, Lambda5, Lambda6, Lambda7, Lambda8]
+    Ks = [K1, K2, K3, K4, K5, K6, K7, K8]
+    Ds = [global_deflections(Asm, qv) for Asm in Assemblies]
+    ds = [element_deflections(Lam, D) for Lam, D in zip(Lambdas, Ds)]
+    fs = [element_force(K, d) for K, d in zip(Ks, ds)]
+    fs[5] = fs[5] - feq6
+    fs[6] = fs[6] - feq7
+
+    Ls = [L1, L2, L3, L4, L5, L6, L7, L8]
+    As = [A1, A2, A3, A4, A5, A6, A7, A8]
+    Is = [I1, I2, I3, I4, I5, I6, I7, I8]
+    w_bars = [0.0, 0.0, 0.0, 0.0, 0.0, wb6, wb7, 0.0]
+
+    results = []
+    for idx in range(8):
+        f = fs[idx]
+        sigma_axial = abs(f[0, 0]) / As[idx]
+        M1, M2 = f[2, 0], f[5, 0]
+        x_vals, M_vals = moment_along_element(M1, M2, w_bars[idx], Ls[idx])
+        sigma_bending_vals = np.abs(M_vals) * c / Is[idx]
+        sigma_total_vals = sigma_axial + sigma_bending_vals
+        i_max = int(np.argmax(sigma_total_vals))
+        results.append((idx + 1, x_vals[i_max], Ls[idx], sigma_axial,
+                         sigma_bending_vals[i_max], sigma_total_vals[i_max]))
+
+    governing = max(results, key=lambda r: r[5])
+    return {'V': V_ms, 'q': qv, 'd': ds, 'stress_results': results,
+            'governing': governing, 'sigma_max': governing[5]}
  
 # Reference case: reuse the 'Low' wind result already computed above rather
 # than re-solving. V_ref is back-calculated from Table 1's own pressure
@@ -781,6 +840,21 @@ print(f"V_max = V_ref * sqrt(sigma_allow / sigma_ref) = {V_max:.3f} m/s ({V_max*
 # Validate by fully re-solving the FE model at V_max (also gives the
 # deflections/reactions the brief asks for at this loading case)
 case_max = solve_wind_case(V_max)
+sigma_ref_mod = solve_wind_case_mod(V_ref)['sigma_max']
+V_max_mod = V_ref * np.sqrt(sigma_allow / sigma_ref_mod)
+case_max_mod = solve_wind_case_mod(V_max_mod)
+
+print()
+print(f"--- Structural modification: brace added (element 8) ---")
+print(f"Original V_max = {V_max:.4f} m/s ({V_max*3.6:.2f} km/h)")
+print(f"Modified V_max = {V_max_mod:.4f} m/s ({V_max_mod*3.6:.2f} km/h)")
+print(f"Change: {(V_max_mod/V_max - 1)*100:.2f}%")
+
+volume_orig = A1*L1 + A2*L2 + A3*L3 + A4*L4 + A5*L5 + A6*L6 + A7*L7
+volume_mod = volume_orig + A8*L8
+print(f"Original volume = {volume_orig*1e6:.2f} cm^3")
+print(f"Modified volume = {volume_mod*1e6:.2f} cm^3")
+print(f"Change in material use: {(volume_mod/volume_orig - 1)*100:.2f}%")
 print(f"Check - re-solving directly at V_max gives sigma_max = {case_max['sigma_max']/1e6:.4f} MPa "
       f"(should equal {sigma_allow/1e6:.1f} MPa)")
  
@@ -830,7 +904,8 @@ v_x = N1*d1[1] + N2*d1[2] + N3*d1[4] + N4*d1[5]
 # ----------------------------------
 # Deflected shape plotting
 # ----------------------------------
-def plot_deflected_shape(node1XG,node1YG,node2XG,node2YG,d_e,Disp_mag,N_points):
+def plot_deflected_shape(node1XG,node1YG,node2XG,node2YG,d_e,Disp_mag,N_points,
+                          color='r.-', label='Deflected Position'):
     """
     Plots the undeflected baseline and deflected shape of ONE frame element
     onto the current matplotlib axes.
@@ -870,7 +945,7 @@ def plot_deflected_shape(node1XG,node1YG,node2XG,node2YG,d_e,Disp_mag,N_points):
     Deflected_YG = Undeflected_baseline_YG + Disp_mag*Deflections_YG
     # Step 8: plot
     plt.plot(Undeflected_baseline_XG, Undeflected_baseline_YG, 'b:.', label='Undeflected Position')
-    plt.plot(Deflected_XG, Deflected_YG, 'r.-', label='Deflected Position')
+    plt.plot(Deflected_XG, Deflected_YG, color, label=label)
  
     return Deflected_XG, Deflected_YG
 # ----------------------------------
@@ -919,6 +994,9 @@ plot_deflected_shape(E[0], E[1], F[0], F[1], d6, Disp_mag, N_points)
 # Element 7: F -> G
 plot_deflected_shape(F[0], F[1], G[0], G[1], d7, Disp_mag, N_points)
 # Avoid duplicate legend entries (each call adds the same 2 labels)
+d8_mod = case_max_mod['d'][7]
+plot_deflected_shape(S2[0], S2[1], G[0], G[1], d8_mod, Disp_mag, N_points,
+                      color='m.-', label='Brace (element 8)')
 handles, labels = plt.gca().get_legend_handles_labels()
 by_label = dict(zip(labels, handles))
 plt.legend(by_label.values(), by_label.keys())

@@ -481,6 +481,7 @@ F7 = global_force(K_hat7, D7)
 # a structure with no external Y-load - confirms the sign convention below.
 R1 = F1[0:3]   # [Rx1, Ry1, M1] at support 1
 R2 = F2[0:3]   # [Rx2, Ry2, M2] at support 2
+
  
 # ----------------------------------
 # Combined normal stress: sigma_total = |sigma_axial| + |sigma_bending|
@@ -526,7 +527,20 @@ for elem_no, e in elements.items():
  
 governing = max(stress_results, key=lambda r: r[5])
 gov_elem, gov_end, gov_node, gov_axial, gov_bending, gov_total = governing
- 
+
+elements_D = {1: D1, 2: D2, 3: D3, 4: D4, 5: D5, 6: D6, 7: D7}
+elements_D = {1: D1, 2: D2, 3: D3, 4: D4, 5: D5, 6: D6, 7: D7}
+node_names = {1: ('S1','C'), 2: ('S2','C'), 3: ('C','D'), 4: ('D','E'),
+              5: ('D','F'), 6: ('E','F'), 7: ('F','G')}
+
+print(f"Node S1: X=0.0000 mm, Y=0.0000 mm, theta=0.000000e+00 rad (fixed support)")
+print(f"Node S2: X=0.0000 mm, Y=0.0000 mm, theta=0.000000e+00 rad (fixed support)")
+
+node_dofs = {'C': (0,3), 'D': (3,6), 'E': (6,9), 'F': (9,12), 'G': (12,15)}
+for name, (i, j) in node_dofs.items():
+    print(f"Node {name}: X={q[i,0]*1000:.4f} mm, Y={q[i+1,0]*1000:.4f} mm, theta={q[i+2,0]:.6e} rad")
+    
+print(f"Node G deflection: X = {q[12,0]*1000:.4f} mm, Y = {q[13,0]*1000:.4f} mm, theta = {q[14,0]:.6e} rad")
 print(f"Maximum total normal stress = {gov_total/1e6:.2f} MPa")
 print(f"  occurs in element {gov_elem}, at its end nearest node {gov_node}")
 print(f"  (sigma_axial = {gov_axial/1e6:.2f} MPa, sigma_bending = {gov_bending/1e6:.2f} MPa)")
@@ -660,7 +674,6 @@ plt.legend(by_label.values(), by_label.keys())
  
 plt.xlabel(r"$X^G$ (m)")
 plt.ylabel(r"$Y^G$ (m)")
-plt.title(f"Deflected shape (displacement magnification = {Disp_mag})")
 plt.grid(True)
 plt.axis('equal')
 plt.show()
