@@ -8,7 +8,7 @@ and the sign face (nodes E, F, G) fixed, but free to change anything
 between them - and a comparison of how the peak rated wind speed and the
 total material use change as a result.
 
-This file builds and compares THREE designs, all solved the same way
+This file builds and compares FOUR designs, all solved the same way
 (Euler-Bernoulli, same UDL wind-loading method as Part 2, same FoS = 2.5
 against the same 350 MPa yield):
 
@@ -19,6 +19,11 @@ against the same 350 MPa yield):
   Design C   - "Lightweight": remove no elements, but CHANGE every existing
                element's tube to a thinner wall (same 100mm OD, larger bore),
                using less material per element.
+  Design D   - "Braced (S2-G)": an alternative brace ADDING one new element
+               from fixed support S2 straight to the top node G, instead of
+               C-E. A second, independently-proposed answer to the same
+               open-ended question - see DESCRIPTION.md for how it compares
+               to Design B.
 
 Rationale for each (see DESCRIPTION.md for the full discussion):
   Design B targets the stress concentration found in Parts 1 & 2 (element 3
@@ -28,6 +33,9 @@ Rationale for each (see DESCRIPTION.md for the full discussion):
   Design C tests the opposite lever: the baseline structure has V_max well
   above the brief's "Very High" wind category (see Part 2's results), which
   suggests there is spare capacity to remove material from instead.
+  Design D takes a more direct approach to overall stiffness - one long
+  brace spanning almost the full height of the structure - rather than
+  targeting the specific C/D stress concentration.
 
 Requires frame_model.py and part2_distributed_wind.py in the same folder.
 See DESCRIPTION.md for the full write-up of the results and the rationale
@@ -61,6 +69,17 @@ def add_CE_brace(elements, A=A_SECTION, I=I_SECTION):
     Assembly8 = np.zeros((15, 6))
     Assembly8[0:3, 0:3] = np.eye(3)   # local node 1 -> C (global rows 0-2)
     Assembly8[6:9, 3:6] = np.eye(3)   # local node 2 -> E (global rows 6-8)
+    return elements + [{'E': E_STEEL, 'I': I, 'A': A, 'L': L8, 'alpha': alpha8, 'Assembly': Assembly8}]
+
+
+def add_S2G_brace(elements, A=A_SECTION, I=I_SECTION):
+    """Design D: add element 8, a new diagonal brace from fixed support S2
+    directly to node G (top of the mast). S2's end of the brace is fixed
+    (like elements 1/2), so only the G end maps into the global DOF."""
+    L8 = np.hypot(*(G - S2))
+    alpha8 = np.arctan2(G[1] - S2[1], G[0] - S2[0])
+    Assembly8 = np.zeros((15, 6))
+    Assembly8[12:15, 3:6] = np.eye(3)   # local node 2 -> G (global rows 12-14)
     return elements + [{'E': E_STEEL, 'I': I, 'A': A, 'L': L8, 'alpha': alpha8, 'Assembly': Assembly8}]
 
 
@@ -157,21 +176,28 @@ if __name__ == "__main__":
           f"I={I_new:.6e} m^4 ({I_new/I_SECTION*100:.1f}% of baseline I)")
     designC_summary = summarise("Design C (lightweight)", base_elements(A=A_new, I=I_new), ELEM_NAMES_BASE)
 
+    print("================================================================")
+    print("Design D: alternative brace - S2 straight to G (vs Design B's C-E)")
+    print("================================================================")
+    names_D = ELEM_NAMES_BASE + ['8 (S2-G, NEW)']
+    designD_summary = summarise("Design D (braced, S2-G)", add_S2G_brace(base_elements()), names_D)
+
     # ============================================================
     # Comparison table
     # ============================================================
     print("================================================================")
     print("Comparison")
     print("================================================================")
-    print(f"  {'Design':<22}{'Mass (kg)':>12}{'Mass vs base':>14}{'V_max (m/s)':>14}{'V_max vs base':>16}")
+    print(f"  {'Design':<25}{'Mass (kg)':>12}{'Mass vs base':>14}{'V_max (m/s)':>14}{'V_max vs base':>16}")
     base_mass = baseline_summary['mass']
     base_Vmax = baseline_summary['V_max']
-    for s in [baseline_summary, designB_summary, designC_summary]:
-        print(f"  {s['label']:<22}{s['mass']:12.3f}{s['mass']/base_mass*100:13.1f}%"
+    all_designs = [baseline_summary, designB_summary, designC_summary, designD_summary]
+    for s in all_designs:
+        print(f"  {s['label']:<25}{s['mass']:12.3f}{s['mass']/base_mass*100:13.1f}%"
               f"{s['V_max']:14.3f}{s['V_max']/base_Vmax*100:15.1f}%")
     print()
     V_very_high = 50.0   # m/s, Table 1's "Very High" category
-    for s in [baseline_summary, designB_summary, designC_summary]:
+    for s in all_designs:
         margin = "above" if s['V_max'] >= V_very_high else "BELOW"
         print(f"  {s['label']}: V_max is {margin} Table 1's 'Very High' (50 m/s) category "
               f"by {abs(s['V_max']-V_very_high):.1f} m/s")

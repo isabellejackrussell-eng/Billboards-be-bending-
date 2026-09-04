@@ -139,11 +139,12 @@ These equivalent loads get solved for `q` exactly like Part 1's point loads. But
 
 ### Method
 
-Three designs, all solved identically (same UDL method as Part 2, same FoS = 2.5 target against the same 350 MPa yield), so the comparison is apples-to-apples:
+Four designs, all solved identically (same UDL method as Part 2, same FoS = 2.5 target against the same 350 MPa yield), so the comparison is apples-to-apples:
 
 - **Baseline** — the original 7-element structure, for reference.
 - **Design B ("Braced")** — adds one new 8th element, a diagonal brace directly from node C to node E (both already-existing free nodes — no new DOF needed, just a new 15×6 Assembly matrix). *Rationale:* Parts 1, 2 and the equilibrium checks all repeatedly identified element 3 and the joint at D as the structure's stress hot-spot — that region currently relies on the slender D–E outrigger (element 4) plus the C-D-F diagonal chain to get load up to the mast. A direct C-to-E brace gives that load a second, more direct path, bypassing D's joint entirely for part of the load.
 - **Design C ("Lightweight")** — keeps the original 7-element topology but thins every tube's wall (100mm OD unchanged, bore opened from 90mm to 93mm). *Rationale:* Part 2 found the baseline structure's rated wind speed (62.0 m/s) sits well above Table 1's "Very High" category (50 m/s) — there's spare capacity to trade for weight savings, rather than only ever adding material.
+- **Design D ("Braced, S2-G")** — a second, independently-proposed brace: instead of C-to-E, one new element running the full height from fixed support S2 straight to the top node G. *Rationale:* a more direct approach to overall stiffness — one long brace spanning almost the whole structure — rather than targeting the specific C/D stress concentration the way Design B does. Note this brace's S2 end is fixed, so (like elements 1/2) only its G end maps into the global DOF — see `add_S2G_brace()`.
 
 `solve_udl_case()` generalises Part 2's wind-load solver to work on *any* element list/topology (not just the fixed 7-element baseline), and `find_V_max()` reuses the same "solve once, then scale by √(σ_allow/σ_ref)" trick from Part 2, since the V²-stress-scaling property holds for any linear elastic model, whatever its topology.
 
@@ -154,12 +155,14 @@ Three designs, all solved identically (same UDL method as Part 2, same FoS = 2.5
 | Design | Mass | vs baseline | V_max | vs baseline |
 |---|---|---|---|---|
 | Baseline | 33.7 kg | 100% | 62.0 m/s | 100% |
-| B — Braced | 39.9 kg | +18% | 75.7 m/s | +22% |
+| B — Braced (C-E) | 39.9 kg | +18% | 75.7 m/s | +22% |
 | C — Lightweight | 23.9 kg | −29% | 53.0 m/s | −14% |
+| D — Braced (S2-G) | 50.0 kg | +48% | 94.8 m/s | +53% |
 
 - **Design B is a genuinely favourable trade**: an 18% mass increase buys a 22% increase in rated wind speed — *more* than proportional. That's a signature of successfully relieving a stress concentration rather than just "adding more of the same" everywhere: the new brace specifically fixes the weakest link (element 3/joint D), so a comparatively small amount of extra material has an outsized effect on the governing stress. Interestingly, the governing element also *changes* under this design (element 2, not element 3) — evidence the brace did its job and shifted the bottleneck elsewhere.
 - **Design C is a real, quantifiable weight-safety trade-off**: it saves 29% of the material at the cost of 14% of the rated wind speed, landing at 53.0 m/s — still 3 m/s above the "Very High" category, but with a much thinner margin than the baseline's 12 m/s. Whether that's an acceptable trade depends on factors outside this model (corrosion allowance, fatigue, buckling of a thinner-walled tube, manufacturing tolerances) — worth flagging explicitly as a limitation if you discuss this design in your report.
-- Both are legitimate, defensible answers to the brief's open-ended question — there's no single "correct" modification, which is exactly what the brief says to expect. Feel free to try your own variations by editing `base_elements()`/`add_CE_brace()`'s parameters (e.g. a different `ID_new`, or bracing a different pair of nodes) — the whole point of the generic `assemble_structure()` machinery in `frame_model.py` is to make that quick to experiment with.
+- **Design D gives the single biggest V_max improvement (+53%) but also the biggest mass penalty (+48%)** — roughly proportional, unlike Design B's more-than-proportional gain. It doesn't change the governing element (still element 3, same as baseline), meaning the long S2-to-G brace raises capacity by stiffening the structure overall rather than by specifically relieving the C/D hot-spot the way Design B's shorter, targeted brace does. Compared directly to Design B: Design D buys more speed margin, but at roughly 4× the mass cost per unit of V_max gained (48%/53% ≈ 0.91 vs Design B's 18%/22% ≈ 0.82 mass-% per V_max-%) — Design B is the more materially efficient brace, Design D the more conservative one if raw capacity matters most.
+- All three modifications are legitimate, defensible answers to the brief's open-ended question — there's no single "correct" modification, which is exactly what the brief says to expect. Feel free to try your own variations by editing `base_elements()`/`add_CE_brace()`/`add_S2G_brace()`'s parameters (e.g. a different `ID_new`, or bracing a different pair of nodes) — the whole point of the generic `assemble_structure()` machinery in `frame_model.py` is to make that quick to experiment with.
 
 ---
 
